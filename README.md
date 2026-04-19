@@ -74,6 +74,7 @@ team in parallel and merges results.
 | `ELABFTW_TEAM_ID` | no | auto | Single-team mode: pin the inferred team. Discovered at startup via `/users/me` when unset. |
 | `ELABFTW_ALLOW_WRITES` | no | `false` | `true` to expose create / update / delete / comment / step / link / tag tools. |
 | `ELABFTW_ALLOW_DESTRUCTIVE` | no | `false` | `true` to additionally expose lock / unlock / sign / timestamp / bloxberg. Irreversible. Requires `ELABFTW_ALLOW_WRITES=true`. |
+| `ELABFTW_REVEAL_USER_IDENTITIES` | no | `false` | `true` to surface user names / emails / orcids in formatter output. Default-off means user tools and comment listings return `user <id>` instead of PII. `elab_me` is exempt (callers always see their own identity). |
 | `ELABFTW_TIMEOUT_MS` | no | `30000` | Per-request timeout. |
 | `ELABFTW_USER_AGENT` | no | `sura-elabftw-mcp/<version>` | Shows up in instance access logs. |
 
@@ -89,7 +90,8 @@ set.** Mixing the two is rejected at startup.
 | `elab_me` | Show the user the API key is authenticated as. Accepts `team`. |
 | `elab_info` | Instance version, PHP version, aggregate counts. |
 | `elab_search` | List experiments / items / templates / items_types within one team. Supports the elabftw `extended` DSL (`rating:5 and tag:"buffer"`). |
-| `elab_get` | Fetch a single entity with body and parsed `extra_fields`. HTML body is stripped to plain text. |
+| `elab_get` | Fetch a single entity with body and parsed `extra_fields`. Pass `include=["attachments","steps","comments","links"]` to fan out sub-resources in one call (cohort-review shortcut). Body rendering: `format="markdown"` (default) preserves tables + link hrefs; `format="text"` = legacy stripped plaintext; `format="html"` = raw. |
+| `elab_get_bulk` | Fetch up to 50 entities of the same kind with shared `include` / `format`. Chunks requests into groups of 8. Each id is team-validated before fetch. |
 | `elab_list_attachments` | File attachment metadata on an entity. |
 | `elab_download_attachment` | Raw bytes. Text files returned as text; binary as base64. Files >2 MB are truncated with a note. |
 | `elab_list_comments` | Comments on an entity. |
@@ -101,6 +103,12 @@ set.** Mixing the two is rejected at startup.
 | `elab_list_events` | Scheduler / booking events. |
 | `elab_list_teams` | All teams on the instance (for id → name mapping). Marks which teams have keys configured. |
 | `elab_configured_teams` | List teams this MCP has keys for. |
+| `elab_search_users` | Search users by name/email (empty `q` lists visible). Resolves opaque `userid` to identity. Requires team-admin key. Identity fields gated behind `ELABFTW_REVEAL_USER_IDENTITIES=true`. |
+| `elab_list_extra_field_names` | Instance-wide list of every `extra_fields` key with data. Use to discover which structured fields templates define before reviewing student submissions. |
+| `elab_list_revisions` | List body revisions for an entity. Surfaces edit history (who / when / size) for cohort review. Per-instance availability. |
+| `elab_get_revision` | Fetch one revision's body. Rendered through the markdown path (tables + hrefs preserved). |
+| `elab_get_user` | Fetch one user by `userid`. Identity fields gated behind `ELABFTW_REVEAL_USER_IDENTITIES=true`. |
+| `elab_list_team_users` | Roster for a given team. Works around the lack of a `/teams/{id}/users` endpoint by filtering `/users` client-side. Requires team-admin key. |
 | `elab_export` | PDF / PDF-A / ZIP / ZIP-A / ELN / ELN-HTML / CSV / JSON / QR-PNG / QR-PDF. |
 | `elab_search_all_teams` | (multi-team only) Fan out a search across every configured team in parallel. |
 
@@ -158,6 +166,43 @@ would create entries in the wrong team.
 This is a soft guardrail running in the MCP process, not in elabftw.
 For hard isolation, use an account that is only a member of the
 target team.
+
+### User roster access
+
+`elab_search_users` / `elab_get_user` / `elab_list_team_users` hit
+`/users` and `/users/{id}`. These endpoints are sysadmin-wide;
+team-admin keys typically succeed but are restricted to users visible
+via team membership. A plain team-member key gets 403. There is no
+dedicated `/teams/{id}/users` endpoint on the stable API, so
+`elab_list_team_users` runs `/users` under the team's key and filters
+client-side.
+
+### For teaching-lab / cohort review
+
+A common use case is reviewing a class of student practicals — e.g. 40 students all running the same template, with an instructor using the LLM to spot deviations. The recommended workflow:
+
+1. **Find the template.** `elab_list_templates` lists experiment templates in a team. Note the id of the practical.
+2. **See the expected schema.** `elab_get({entityType: "experiments_templates", id})` returns the template's body + `extra_fields`. This is the ground truth for what students were asked to fill in.
+3. **Check which keys the instance uses.** `elab_list_extra_field_names` surfaces every `extra_fields` key with any data on the instance — a quick way to spot whether students filled structured fields vs typed everything into prose.
+4. **List submissions.** `elab_search({entityType: "experiments", extended: "tag:\"ACFP25\""})` (or whichever tag/template the cohort shares).
+5. **Pull full submissions in one call each.** `elab_get({id, include: ["attachments","steps","comments","links"]})` — one tool call per student, body rendered as markdown so tables survive.
+6. **Resolve userids to names (if needed).** `elab_search_users("")` with a team-admin key maps `userid` fields to real identities. Requires `ELABFTW_REVEAL_USER_IDENTITIES=true` if you want full names in the model's context.
+
+### Privacy defaults
+
+By default the MCP redacts user names / emails / orcids out of
+formatter output. `elab_list_comments` shows `user 165 @ 2026-04-14:
+...` instead of `Ada Lovelace @ 2026-04-14: ...`, and the Phase-1
+user tools return `userid` + team memberships only. The numeric
+`userid` surfaced on every entity stays — it is the join key for
+cohort review and does not leak identity on its own.
+
+Set `ELABFTW_REVEAL_USER_IDENTITIES=true` when the operator wants
+the model to see real names (cohort review with student consent,
+multi-tenant admin use, instructor workflows). `elab_me` is exempt
+from the gate — the caller inspecting their own account is not a
+privacy concern and the redaction would break the authn
+sanity-check that tool exists for.
 
 ## Known gotchas
 

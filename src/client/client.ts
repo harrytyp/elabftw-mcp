@@ -15,6 +15,7 @@ import type {
   ElabLink,
   ElabListQuery,
   ElabMetadata,
+  ElabRevision,
   ElabStep,
   ElabTag,
   ElabTeam,
@@ -446,6 +447,32 @@ export class ElabftwClient {
       `/${fromType}/${fromId}/${sub}/${targetId}`,
       undefined,
       { method: 'DELETE' }
+    );
+  }
+
+  /**
+   * `GET /{entityType}/{id}/revisions` — list prior body snapshots.
+   *
+   * Availability: elabftw revisions are controlled by a per-instance
+   * config flag. On instances with revisions disabled, elabftw returns
+   * 400 / 404. Callers should tolerate that as "no history available".
+   */
+  listRevisions(
+    entityType: ElabEntityType,
+    id: number
+  ): Promise<ElabRevision[]> {
+    return elabJson(this.config, `/${entityType}/${id}/revisions`);
+  }
+
+  /** `GET /{entityType}/{id}/revisions/{revisionId}` — one snapshot. */
+  getRevision(
+    entityType: ElabEntityType,
+    id: number,
+    revisionId: number
+  ): Promise<ElabRevision> {
+    return elabJson(
+      this.config,
+      `/${entityType}/${id}/revisions/${revisionId}`
     );
   }
 

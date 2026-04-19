@@ -34,6 +34,15 @@ export interface ElabMcpConfig {
   timeoutMs?: number;
   allowWrites: boolean;
   allowDestructive: boolean;
+  /**
+   * When true, formatters may surface user names, emails, and orcids
+   * through MCP tool output. When false (default), user fields are
+   * redacted to `user <id>` and team membership ids. `elab_me` is
+   * exempt — the caller's own identity is not a privacy concern.
+   *
+   * Controlled by `ELABFTW_REVEAL_USER_IDENTITIES` env var.
+   */
+  revealUserIdentities: boolean;
   /** One entry per API key. Always non-empty. */
   keys: ElabKeyConfig[];
   /** Team id used when a tool call doesn't specify `team`. Always present in `keys`. */
@@ -108,6 +117,7 @@ export function loadConfig(): ElabMcpConfig {
   const userAgent = process.env.ELABFTW_USER_AGENT ?? 'sura-elabftw-mcp/0.1.0';
   const allowWrites = optionalBool('ELABFTW_ALLOW_WRITES');
   const allowDestructive = optionalBool('ELABFTW_ALLOW_DESTRUCTIVE');
+  const revealUserIdentities = optionalBool('ELABFTW_REVEAL_USER_IDENTITIES');
 
   const indexedKeys = collectIndexedKeys();
   const legacyKey = process.env.ELABFTW_API_KEY?.trim();
@@ -136,6 +146,7 @@ export function loadConfig(): ElabMcpConfig {
       timeoutMs,
       allowWrites,
       allowDestructive,
+      revealUserIdentities,
       keys: indexedKeys,
       defaultTeam,
       teamDeclaredByUser: true,
@@ -158,6 +169,7 @@ export function loadConfig(): ElabMcpConfig {
       timeoutMs,
       allowWrites,
       allowDestructive,
+      revealUserIdentities,
       keys: [{ team, key: legacyKey }],
       defaultTeam: team,
       teamDeclaredByUser: true,
@@ -172,6 +184,7 @@ export function loadConfig(): ElabMcpConfig {
     timeoutMs,
     allowWrites,
     allowDestructive,
+    revealUserIdentities,
     keys: [{ team: 0, key: legacyKey }],
     defaultTeam: 0,
     teamDeclaredByUser: false,

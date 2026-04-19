@@ -1,12 +1,20 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
+  type ElabEntity,
   type ElabEntityType,
+  type ElabUser,
+  type ElabftwClient,
+  type EntityExtras,
   formatComments,
   formatEntityFull,
   formatEntityList,
   formatLinks,
+  formatRevisionBody,
+  formatRevisions,
   formatSteps,
   formatUploads,
+  formatUser,
+  formatUserList,
 } from '../../client';
 import { z } from 'zod';
 import type { ClientRegistry } from '../clients';
@@ -74,11 +82,82 @@ const listInput = z.object({
 const scopeMap = { self: 1, team: 2, everything: 3 } as const;
 const stateMap = { normal: 1, archived: 2, deleted: 3 } as const;
 
+/**
+ * Check whether a user belongs to the given team. `/users` returns
+ * both a `team` scalar (current team under the key) and a `teams`
+ * array (full membership). Either may be missing depending on the
+ * instance version; we accept both.
+ */
+function userInTeam(user: ElabUser, team: number): boolean {
+  if (user.team === team) return true;
+  if (Array.isArray(user.teams) && user.teams.some((t) => t.id === team))
+    return true;
+  return false;
+}
+
+type IncludeKey = 'steps' | 'comments' | 'attachments' | 'links';
+
+/**
+ * Fetch one entity + its sub-resources. Assumes `assertTeam` already
+ * validated the team. Reused by `elab_get` and `elab_get_bulk`.
+ */
+async function fetchEntityWithExtras(
+  client: ElabftwClient,
+  entityType: ElabEntityType,
+  id: number,
+  include: readonly IncludeKey[] | undefined
+): Promise<{ entity: ElabEntity; extras: EntityExtras }> {
+  const entity = await client.get(entityType, id);
+  if (!include || include.length === 0) {
+    return { entity, extras: {} };
+  }
+  const want = new Set(include);
+  const [steps, comments, attachments, linksExp, linksItems] =
+    await Promise.all([
+      want.has('steps') ? client.listSteps(entityType, id) : undefined,
+      want.has('comments') ? client.listComments(entityType, id) : undefined,
+      want.has('attachments') ? client.listUploads(entityType, id) : undefined,
+      want.has('links')
+        ? client.listLinks(entityType, id, 'experiments')
+        : undefined,
+      want.has('links')
+        ? client.listLinks(entityType, id, 'items')
+        : undefined,
+    ]);
+  const links = want.has('links')
+    ? [...(linksExp ?? []), ...(linksItems ?? [])]
+    : undefined;
+  return {
+    entity,
+    extras: { steps, comments, attachments, links },
+  };
+}
+
+/**
+ * Run an array of async factories in chunks of `size`, sequentially
+ * between chunks, parallel within one. Used by bulk fetch to avoid
+ * opening 50 sockets at once.
+ */
+async function chunkedAll<T>(
+  factories: Array<() => Promise<T>>,
+  size: number
+): Promise<T[]> {
+  const out: T[] = [];
+  for (let i = 0; i < factories.length; i += size) {
+    const slice = factories.slice(i, i + size).map((fn) => fn());
+    const results = await Promise.all(slice);
+    for (const r of results) out.push(r);
+  }
+  return out;
+}
+
 export function registerReadTools(
   server: McpServer,
   registry: ClientRegistry,
-  _config: ElabMcpConfig
+  config: ElabMcpConfig
 ): void {
+  const revealUsers = config.revealUserIdentities;
+  const formatOpts = { revealUsers };
   server.tool(
     'elab_search',
     'Search experiments, items, templates, or items_types within one team. Pass `team` to pick which configured key/team to query; omit for the default team. Results are filtered to that team. Use `extended` for the elabftw DSL (rating:, tag:, date:, category:) when you need precise filters.',
@@ -117,23 +196,110 @@ export function registerReadTools(
 
   server.tool(
     'elab_get',
-    'Fetch a single entity with full body, category, status, tags, and parsed extra_fields. HTML body is stripped to plain text for readability. Pass `team` to scope the lookup.',
+    'Fetch a single entity with full body, category, status, tags, and parsed extra_fields. ' +
+      'For reviewing a cohort, set `include=["attachments","steps","comments","links"]` to get everything in one round-trip instead of 4 tool calls per entity. ' +
+      'Body rendering: `format="markdown"` (default) preserves tables (as GFM pipes) and link hrefs — use this for quantitative review. `format="text"` is the legacy stripped-plain-text behaviour. `format="html"` returns the raw HTML body. ' +
+      'Pass `team` to scope the lookup.',
     {
       entityType: entityTypeSchema,
       id: z.number().int().positive(),
       team: teamParamSchema,
+      include: z
+        .array(z.enum(['steps', 'comments', 'attachments', 'links']))
+        .optional()
+        .describe(
+          'Sub-resources to fetch in parallel and render under H2 sections. Omit to skip all (default). `links` fetches both `experiments`- and `items`-kinded links.'
+        ),
+      format: z
+        .enum(['text', 'markdown', 'html'])
+        .optional()
+        .describe(
+          'Body rendering: `markdown` (default) lossless HTML→markdown with tables+links. `text` legacy stripped plaintext. `html` raw body.'
+        ),
     },
     async (args) => {
-      const { entityType, id, team } = args as {
+      const { entityType, id, team, include, format } = args as {
         entityType: ElabEntityType;
         id: number;
         team?: number;
+        include?: Array<'steps' | 'comments' | 'attachments' | 'links'>;
+        format?: 'text' | 'markdown' | 'html';
       };
       const t = effectiveTeam(registry, team);
       const client = clientFor(registry, team);
       return guard(
-        () => assertTeam(client, entityType, id, t),
-        (entity) => text(formatEntityFull(entity, client.parseMetadata(entity)))
+        async () => {
+          await assertTeam(client, entityType, id, t);
+          return fetchEntityWithExtras(client, entityType, id, include);
+        },
+        ({ entity, extras }) =>
+          text(
+            formatEntityFull(
+              entity,
+              client.parseMetadata(entity),
+              extras,
+              { ...formatOpts, format: format ?? 'markdown' }
+            )
+          )
+      );
+    }
+  );
+
+  server.tool(
+    'elab_get_bulk',
+    'Fetch up to 50 entities of the same kind in one call with shared `include` and `format` options. Ideal for cohort review (40 students × 4 round-trips → 1 call). ' +
+      'Each id is validated against the resolved team before fetch; a cross-team id fails the whole call (same rule as `elab_get`). ' +
+      'Requests are chunked into groups of 8 to avoid opening 50 sockets at once.',
+    {
+      entityType: entityTypeSchema,
+      ids: z
+        .array(z.number().int().positive())
+        .min(1)
+        .max(50)
+        .describe('Entity ids (max 50) — same `entityType` for all.'),
+      team: teamParamSchema,
+      include: z
+        .array(z.enum(['steps', 'comments', 'attachments', 'links']))
+        .optional()
+        .describe(
+          'Sub-resources to fetch for every id. Same semantics as `elab_get`.'
+        ),
+      format: z
+        .enum(['text', 'markdown', 'html'])
+        .optional()
+        .describe('Body rendering. Same options as `elab_get`.'),
+    },
+    async (args) => {
+      const { entityType, ids, team, include, format } = args as {
+        entityType: ElabEntityType;
+        ids: number[];
+        team?: number;
+        include?: Array<'steps' | 'comments' | 'attachments' | 'links'>;
+        format?: 'text' | 'markdown' | 'html';
+      };
+      const t = effectiveTeam(registry, team);
+      const client = clientFor(registry, team);
+      return guard(
+        async () => {
+          const factories = ids.map((id) => async () => {
+            await assertTeam(client, entityType, id, t);
+            return fetchEntityWithExtras(client, entityType, id, include);
+          });
+          return chunkedAll(factories, 8);
+        },
+        (results) => {
+          if (results.length === 0) return text('No entities requested.');
+          const blocks = results.map(({ entity, extras }, i) => {
+            const body = formatEntityFull(
+              entity,
+              client.parseMetadata(entity),
+              extras,
+              { ...formatOpts, format: format ?? 'markdown' }
+            );
+            return `<!-- result ${i + 1}/${results.length} -->\n${body}`;
+          });
+          return text(blocks.join('\n\n---\n\n'));
+        }
       );
     }
   );
@@ -242,7 +408,7 @@ export function registerReadTools(
           await assertTeam(client, entityType, id, t);
           return client.listComments(entityType, id);
         },
-        (comments) => text(formatComments(comments))
+        (comments) => text(formatComments(comments, formatOpts))
       );
     }
   );
@@ -469,6 +635,97 @@ export function registerReadTools(
   );
 
   server.tool(
+    'elab_list_revisions',
+    'List body revisions for an entity in chronological order. Reveals when the body was edited and by whom — useful for cohort review to spot last-minute edits or copy-paste between students. Availability is per-instance (elabftw can disable revisions in config); 400/404 is returned as a "no history" error.',
+    {
+      entityType: entityTypeSchema,
+      id: z.number().int().positive(),
+      team: teamParamSchema,
+    },
+    async (args) => {
+      const { entityType, id, team } = args as {
+        entityType: ElabEntityType;
+        id: number;
+        team?: number;
+      };
+      const t = effectiveTeam(registry, team);
+      const client = clientFor(registry, team);
+      return guard(
+        async () => {
+          await assertTeam(client, entityType, id, t);
+          return client.listRevisions(entityType, id);
+        },
+        (revisions) => text(formatRevisions(revisions, formatOpts))
+      );
+    }
+  );
+
+  server.tool(
+    'elab_get_revision',
+    'Fetch the body of a specific revision. Body is rendered through the same markdown path as `elab_get` (tables + link hrefs preserved). Pair with `elab_list_revisions` to pick a `revisionId`.',
+    {
+      entityType: entityTypeSchema,
+      id: z.number().int().positive(),
+      revisionId: z.number().int().positive(),
+      team: teamParamSchema,
+      format: z
+        .enum(['text', 'markdown', 'html'])
+        .optional()
+        .describe(
+          'Body rendering: `markdown` (default) lossless HTML→markdown; `text` legacy stripped plaintext; `html` raw body.'
+        ),
+    },
+    async (args) => {
+      const { entityType, id, revisionId, team, format } = args as {
+        entityType: ElabEntityType;
+        id: number;
+        revisionId: number;
+        team?: number;
+        format?: 'text' | 'markdown' | 'html';
+      };
+      const t = effectiveTeam(registry, team);
+      const client = clientFor(registry, team);
+      return guard(
+        async () => {
+          await assertTeam(client, entityType, id, t);
+          return client.getRevision(entityType, id, revisionId);
+        },
+        (rev) =>
+          text(
+            formatRevisionBody(rev, {
+              ...formatOpts,
+              format: format ?? 'markdown',
+            })
+          )
+      );
+    }
+  );
+
+  server.tool(
+    'elab_list_extra_field_names',
+    'List every `extra_fields` key the instance has any data for (instance-wide). Useful for cohort review: discovers which structured fields (yield, mass, observation) students are expected to fill across templates. Rows render as `name | type | options=[...]`. Pair with `elab_get` on an `experiments_templates` id to see the schema of a specific template.',
+    {},
+    async () =>
+      guard(
+        () => registry.getDefault().listExtraFieldNames(),
+        (descriptors) =>
+          text(
+            descriptors.length
+              ? descriptors
+                  .map((d) => {
+                    const opts =
+                      Array.isArray(d.options) && d.options.length
+                        ? ` | options=[${d.options.join(', ')}]`
+                        : '';
+                    return `${d.name} | ${d.type}${opts}`;
+                  })
+                  .join('\n')
+              : 'No extra_fields keys on this instance.'
+          )
+      )
+  );
+
+  server.tool(
     'elab_list_teams',
     'List teams on the instance the caller has access to. Returns id + name so you can map the `team=<id>` field in search results back to a group name.',
     {},
@@ -490,6 +747,96 @@ export function registerReadTools(
           );
         }
       )
+  );
+
+  server.tool(
+    'elab_search_users',
+    'Search users by name/email (empty `q` lists everyone visible). Returns the mapping from `userid` to identity for cross-referencing entity owners in cohort review. ' +
+      (revealUsers
+        ? 'Identity reveal is ENABLED (`ELABFTW_REVEAL_USER_IDENTITIES=true`): rows include name + email.'
+        : 'Identity reveal is DISABLED (default): rows include only `userid` and team memberships. Set `ELABFTW_REVEAL_USER_IDENTITIES=true` to surface names/emails.') +
+      ' `/users` is sysadmin-broad; team-admin keys typically succeed but are limited to users visible via team membership. 403 means the key is not admin.',
+    {
+      q: z
+        .string()
+        .optional()
+        .describe('Search string. Matches against name/email. Use "" (empty) to list every user the caller can see.'),
+      team: teamParamSchema,
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(500)
+        .optional()
+        .describe('Cap on rows returned (default 100).'),
+    },
+    async (args) => {
+      const input = args as { q?: string; team?: number; limit?: number };
+      const t = effectiveTeam(registry, input.team);
+      const client = clientFor(registry, input.team);
+      const limit = input.limit ?? 100;
+      return guard(
+        async () => {
+          const users = await client.searchUsers(input.q ?? '');
+          const scoped = users.filter((u) => userInTeam(u, t));
+          return scoped.slice(0, limit);
+        },
+        (users) =>
+          text(
+            users.length
+              ? `${users.length} user(s) in team ${t}:\n${formatUserList(users, formatOpts)}`
+              : `No users visible in team ${t}. (If you expected results, check that the API key is admin: \`/users\` requires team-admin or sysadmin.)`
+          )
+      );
+    }
+  );
+
+  server.tool(
+    'elab_get_user',
+    'Fetch one user by `userid`. Resolves the opaque `userid` field seen on experiments/items/comments to identity + role. ' +
+      (revealUsers
+        ? 'Identity reveal is ENABLED: output includes name + email.'
+        : 'Identity reveal is DISABLED (default): output includes userid + team memberships + role only. Set `ELABFTW_REVEAL_USER_IDENTITIES=true` to surface names/emails.'),
+    {
+      userid: z.number().int().positive(),
+      team: teamParamSchema,
+    },
+    async (args) => {
+      const { userid, team } = args as { userid: number; team?: number };
+      const client = clientFor(registry, team);
+      return guard(
+        () => client.getUser(userid),
+        (user) => text(formatUser(user, formatOpts))
+      );
+    }
+  );
+
+  server.tool(
+    'elab_list_team_users',
+    'List every user who is a member of a team. Works by calling `/users` under the team\'s admin key and filtering by team membership client-side (eLabFTW has no dedicated team-roster endpoint). Requires a team-admin key for the given team. ' +
+      (revealUsers
+        ? 'Identity reveal is ENABLED: rows include name + email.'
+        : 'Identity reveal is DISABLED (default): rows include userid + role only.'),
+    {
+      team: teamParamSchema,
+    },
+    async (args) => {
+      const { team } = args as { team?: number };
+      const t = effectiveTeam(registry, team);
+      const client = clientFor(registry, team);
+      return guard(
+        async () => {
+          const users = await client.searchUsers('');
+          return users.filter((u) => userInTeam(u, t));
+        },
+        (users) =>
+          text(
+            users.length
+              ? `${users.length} member(s) in team ${t}:\n${formatUserList(users, formatOpts)}`
+              : `No members visible in team ${t}. The API key likely lacks team-admin privileges; mint a key from a team-admin account.`
+          )
+      );
+    }
   );
 
   server.tool(

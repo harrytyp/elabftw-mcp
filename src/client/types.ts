@@ -351,6 +351,22 @@ export interface ElabEvent {
   [key: string]: unknown;
 }
 
+export interface ElabRevision {
+  id: number;
+  /** ISO timestamp of when the revision was created. */
+  created_at?: string | null;
+  /** User who created the revision. */
+  userid?: number;
+  fullname?: string | null;
+  /** Full body snapshot at the time of the revision. Usually HTML. */
+  body?: string | null;
+  /** Bytes of the body; elabftw returns this on list so callers can pick a short one. */
+  body_size?: number | null;
+  /** 1 = HTML, 2 = Markdown (matches ElabEntity.content_type). */
+  content_type?: number;
+  [key: string]: unknown;
+}
+
 export interface ElabExtraFieldDescriptor {
   name: string;
   type: string;

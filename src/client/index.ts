@@ -13,8 +13,18 @@ export {
   formatEntityList,
   formatEntitySummary,
   formatLinks,
+  formatRevisionBody,
+  formatRevisions,
   formatSteps,
   formatUploads,
+  formatUser,
+  formatUserList,
+} from './format';
+
+export type {
+  EntityExtras,
+  FormatEntityOptions,
+  FormatOptions,
 } from './format';
 
 export type {
@@ -35,6 +45,7 @@ export type {
   ElabListQuery,
   ElabMetadata,
   ElabOrderKey,
+  ElabRevision,
   ElabSortDirection,
   ElabStep,
   ElabTag,
