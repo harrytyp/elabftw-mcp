@@ -20,16 +20,21 @@ export function registerWriteTools(
 
   server.tool(
     'elab_create_entity',
-    'Create a new experiment or item. For experiments pass `category_id=<templateId>` to instantiate a template. For items pass `category_id=<itemsTypeId>`. Pass `team` to target a specific configured team; otherwise the default team is used.',
+    'Create a new entity. Supports all four kinds:\n' +
+      '  - `experiments`: pass `category_id=<templateId>` to instantiate from a template (optional).\n' +
+      '  - `items`: pass `category_id=<itemsTypeId>` (required — every item belongs to a type).\n' +
+      '  - `experiments_templates`: create a blank template. POST accepts title; use `elab_update_entity` afterward to set body/metadata.\n' +
+      '  - `items_types`: create a blank items-type schema. Upstream elabftw currently accepts only `title` on POST; body/metadata edits typically need the web UI (see https://github.com/elabftw/elabftw/issues/4726).\n' +
+      'Pass `team` to target a specific configured team; otherwise the default team is used.',
     {
-      entityType: z.enum(['experiments', 'items']),
+      entityType: entityTypeSchema,
       team: teamParamSchema,
       category_id: z
         .number()
         .int()
         .optional()
         .describe(
-          'Template id (for experiments) or items_type id (for items). Required for items, optional for experiments.'
+          'Template id (for experiments) or items_type id (for items). Required for items, optional for experiments. Ignored for experiments_templates and items_types.'
         ),
       title: z.string().optional(),
       body: z.string().optional(),
@@ -43,7 +48,7 @@ export function registerWriteTools(
     },
     async (args) => {
       const input = args as {
-        entityType: 'experiments' | 'items';
+        entityType: ElabEntityType;
         team?: number;
         category_id?: number;
         title?: string;
@@ -53,6 +58,9 @@ export function registerWriteTools(
       };
       const t = effectiveTeam(registry, input.team);
       const client = clientFor(registry, input.team);
+      const isSchemaKind =
+        input.entityType === 'experiments_templates' ||
+        input.entityType === 'items_types';
       return guard(
         async () => {
           const id = await client.create(input.entityType, {
@@ -62,11 +70,25 @@ export function registerWriteTools(
             tags: input.tags,
             metadata: input.metadata,
           });
-          if (id == null) return { id, landedTeam: undefined as number | undefined };
+          if (id == null) return { id, landedTeam: undefined as number | undefined, patched: false };
+          // For templates/items_types, POST accepts only `title` reliably;
+          // follow up with PATCH so body/metadata actually land.
+          let patched = false;
+          if (isSchemaKind && (input.body || input.metadata)) {
+            try {
+              await client.update(input.entityType, id, {
+                ...(input.body !== undefined ? { body: input.body } : {}),
+                ...(input.metadata !== undefined ? { metadata: input.metadata } : {}),
+              });
+              patched = true;
+            } catch {
+              // Leave patched=false; creation itself succeeded.
+            }
+          }
           const fresh = await client.get(input.entityType, id);
-          return { id, landedTeam: fresh.team };
+          return { id, landedTeam: fresh.team, patched };
         },
-        ({ id, landedTeam }) => {
+        ({ id, landedTeam, patched }) => {
           if (id == null) {
             return errorText(
               'Create succeeded but elabftw returned no Location header.'
@@ -74,13 +96,21 @@ export function registerWriteTools(
           }
           if (landedTeam !== undefined && landedTeam !== t) {
             return errorText(
-              `Created ${input.entityType.slice(0, -1)} #${id}, but it landed in team ${landedTeam}, not the requested team ${t}. ` +
+              `Created ${input.entityType} #${id}, but it landed in team ${landedTeam}, not the requested team ${t}. ` +
                 'Switch your current team in the elabftw UI (for the key that owns this session) and try again, or soft-delete this entry manually.'
             );
           }
-          return text(
-            `Created ${input.entityType.slice(0, -1)} #${id} in team ${t}.`
-          );
+          const label =
+            input.entityType === 'experiments_templates'
+              ? 'experiments_template'
+              : input.entityType === 'items_types'
+                ? 'items_type'
+                : input.entityType.slice(0, -1);
+          const patchNote =
+            isSchemaKind && (input.body || input.metadata) && !patched
+              ? ' (POST ok; follow-up PATCH for body/metadata failed — use elab_update_entity to retry)'
+              : '';
+          return text(`Created ${label} #${id} in team ${t}.${patchNote}`);
         }
       );
     }

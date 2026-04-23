@@ -6,6 +6,38 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [0.1.3] — 2026-04-23
+
+### Added
+
+- `elab_create_entity` now accepts `experiments_templates` and
+  `items_types` in addition to `experiments` and `items`. Enables
+  creating blank templates / items-type schemas from the MCP. For
+  schema kinds the tool performs a follow-up PATCH when `body` /
+  `metadata` are supplied so edits land despite the POST endpoints
+  only honoring `title` upstream (see elabftw/elabftw#4726). Failure
+  of the follow-up PATCH is reported in the response instead of
+  crashing the call.
+
+### Fixed
+
+- **`elab_create_entity` returned the wrong id.** `extractLocationId`
+  matched the first digit run in the `Location` header, which on
+  `/api/v2/experiments/<id>` is the `2` from the API version — not the
+  new entity id. Now end-anchored. Also fixes step / comment / duplicate
+  / upload id returns (every caller of `extractLocationId`).
+- **`elab_update_entity` returned `400 "Invalid update target."`.**
+  `ElabftwClient.update` was wrapping the patch as
+  `{action:'update', ...fields}`. Modern elabftw v2 treats
+  `action:'update'` as a legacy dispatch requiring `target` + `value`,
+  and rejects a field-shaped body. Now PATCHes the fields directly.
+- **`elab_link_entities` returned `400 "Incorrect content-type header"`.**
+  `addLink` POSTs with no body, and `elabFetch` only set
+  `Content-Type: application/json` when a body was present. elabftw
+  requires the header on write methods even with no payload. `elabFetch`
+  now sets it for all payloadless POST / PATCH / PUT requests (FormData
+  uploads unaffected — they go through `rawBody`).
+
 ### Added
 
 - `elab_search_users`, `elab_get_user`, `elab_list_team_users` read

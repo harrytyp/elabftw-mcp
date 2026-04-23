@@ -140,8 +140,15 @@ export class ElabftwClient {
   }
 
   /**
-   * `PATCH /{entityType}/{id}` with `action:"update"` (the default).
-   * elabftw silently drops unknown fields.
+   * `PATCH /{entityType}/{id}` with the patch body sent directly. elabftw
+   * silently drops unknown fields.
+   *
+   * Do not wrap the body in `{action:'update', ...}` — modern elabftw v2
+   * treats `action:'update'` as a legacy dispatch requiring `target` and
+   * `value` fields, and rejects a field-shaped body with
+   * `400 "Invalid update target."`. The plain PATCH (no `action`) is the
+   * supported shape for field edits; explicit actions like `duplicate`,
+   * `lock`, `sign`, `timestamp` still go through {@link action}.
    */
   update(
     entityType: ElabEntityType,
@@ -150,7 +157,7 @@ export class ElabftwClient {
   ): Promise<ElabEntity> {
     return elabJson(this.config, `/${entityType}/${id}`, undefined, {
       method: 'PATCH',
-      body: { action: 'update', ...patch },
+      body: patch,
     });
   }
 

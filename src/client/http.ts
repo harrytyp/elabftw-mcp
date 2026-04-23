@@ -108,9 +108,15 @@ export async function elabFetch(
 
   let body: RawBody | undefined;
   if (options.rawBody !== undefined) {
+    // FormData / Blob — let fetch set its own Content-Type (with boundary).
     body = options.rawBody;
   } else if (options.body !== undefined) {
     body = JSON.stringify(options.body);
+    headers['Content-Type'] = headers['Content-Type'] ?? 'application/json';
+  } else if (method === 'POST' || method === 'PATCH' || method === 'PUT') {
+    // elabftw rejects payloadless POSTs on some endpoints (e.g. creating
+    // entity links) with "Incorrect content-type header" unless a JSON
+    // Content-Type is present. Set it even with no body.
     headers['Content-Type'] = headers['Content-Type'] ?? 'application/json';
   }
 
@@ -170,11 +176,15 @@ export async function elabJson<T = unknown>(
  * After a POST that creates a resource, elabftw returns 201 with a `Location`
  * header like `/api/v2/experiments/42`. This extracts the trailing numeric id.
  * Returns null if the header is missing or malformed.
+ *
+ * The id must be anchored to the end of the URL — elabftw's Location header
+ * otherwise contains the API version ("v2"), and a non-anchored regex would
+ * match the "2" from the version instead of the real entity id.
  */
 export function extractLocationId(response: Response): number | null {
   const loc = response.headers.get('location') ?? response.headers.get('Location');
   if (!loc) return null;
-  const match = /(\d+)(?:\/?|$)/.exec(loc);
+  const match = /(\d+)\/?$/.exec(loc);
   if (!match || !match[1]) return null;
   const id = Number.parseInt(match[1], 10);
   return Number.isNaN(id) ? null : id;

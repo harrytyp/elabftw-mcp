@@ -116,8 +116,8 @@ set.** Mixing the two is rejected at startup.
 
 | Tool | Purpose |
 |---|---|
-| `elab_create_entity` | Create an experiment or item (optionally from a template). Verifies the new entry lands in the requested team. |
-| `elab_update_entity` | Patch title / body / category / status / rating / date / metadata / permissions. |
+| `elab_create_entity` | Create an experiment or item (optionally from a template). Verifies the new entry lands in the requested team. Bodies are stored as HTML by default — see "Rich body rendering" below if you want markdown. |
+| `elab_update_entity` | Patch title / body / category / status / rating / date / metadata / permissions. `content_type` toggles body rendering between `"html"` (default) and `"markdown"`. Switch to `"markdown"` when your body uses GFM tables, `#` headings, fenced code, etc. — otherwise they render as literal characters. |
 | `elab_update_extra_field` | Patch a single `extra_fields` value without rewriting the whole metadata blob. |
 | `elab_duplicate_entity` | Duplicate with optional file copy and back-link. |
 | `elab_delete_entity` | Soft-delete (state=3). Permanent deletion is sysadmin-only and not exposed. |
@@ -138,6 +138,27 @@ intervention. Gated behind a second flag on purpose.
 | `elab_timestamp` | RFC 3161 trusted timestamp. Consumes from `ts_balance`. |
 | `elab_bloxberg` | Anchor on the Bloxberg blockchain. |
 | `elab_sign` | Cryptographic signature with a configured signature key. |
+
+### Rich body rendering
+
+elabftw stores each entity body with a `content_type`: **HTML (default)**
+or **markdown**. This matters because `elab_create_entity` does not
+currently expose `content_type` — every new entry is created in HTML
+mode. If you send a markdown-flavoured body at creation time
+(`# heading`, GFM tables, `**bold**`), it will be stored verbatim as
+HTML and rendered as raw characters in the UI.
+
+Two-step pattern that works:
+
+```
+elab_create_entity({ entityType: "experiments", title, body, tags })
+elab_update_entity({ entityType: "experiments", id, content_type: "markdown", body })
+```
+
+The `update` call flips the stored `content_type` *and* re-serves the
+body through elabftw's markdown → HTML pipeline so tables, headings,
+and links render correctly. You can also use `content_type: "markdown"`
+on any later update that touches `body`.
 
 ## How team scoping works
 
@@ -186,7 +207,7 @@ A common use case is reviewing a class of student practicals — e.g. 40 student
 3. **Check which keys the instance uses.** `elab_list_extra_field_names` surfaces every `extra_fields` key with any data on the instance — a quick way to spot whether students filled structured fields vs typed everything into prose.
 4. **List submissions.** `elab_search({entityType: "experiments", extended: "tag:\"ACFP25\""})` (or whichever tag/template the cohort shares).
 5. **Pull full submissions in one call each.** `elab_get({id, include: ["attachments","steps","comments","links"]})` — one tool call per student, body rendered as markdown so tables survive.
-6. **Resolve userids to names (if needed).** `elab_search_users("")` with a team-admin key maps `userid` fields to real identities. Requires `ELABFTW_REVEAL_USER_IDENTITIES=true` if you want full names in the model's context.
+6. **Resolve userids to names (if needed).** For a single lookup use `elab_get_user({userid})`. For a cohort, `elab_list_team_users({team})` returns the whole roster in one call (name + email + orcid + role + cross-team memberships). `elab_search_users` is the fallback when you only have a partial name to go on. All three require a team-admin key; name / email / orcid fields are redacted unless `ELABFTW_REVEAL_USER_IDENTITIES=true`.
 
 ### Privacy defaults
 
@@ -219,6 +240,15 @@ sanity-check that tool exists for.
   `ELABFTW_ALLOW_DESTRUCTIVE`.
 - **Upload `type` field is the parent entity type, not MIME.** The
   attachment formatter uses the filename extension instead.
+- **Attachment uploads are not exposed.** `elab_list_attachments` and
+  `elab_download_attachment` are available, but there is currently no
+  MCP tool for adding files to an entry — those still need to go
+  through the elabftw UI. The underlying client method
+  (`ElabftwClient.uploadFile`) exists for programmatic use.
+- **Bodies are HTML by default on create.** If you seed an entry with
+  markdown content, follow up with
+  `elab_update_entity({content_type: "markdown", body: ...})` — see
+  "Rich body rendering" above.
 
 ## Programmatic use
 
