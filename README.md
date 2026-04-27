@@ -125,177 +125,25 @@ This configuration is:
 | `MCP_HOST` | no | `0.0.0.0` | Host to bind the HTTP server to. |
 | `MCP_PORT` | no | `8000` | Port for the HTTP server. |
 
-**Exactly one of `ELABFTW_API_KEY` or `ELABFTW_KEY_<teamId>` must be
-set.** Mixing the two is rejected at startup.
+## Security model
 
-## Tools
+The deployment model for this fork provides two options depending on your trust requirements:
 
-### Read (always enabled)
-
-| Tool | Purpose |
-|---|---|
-| `elab_me` | Show the user the API key is authenticated as. Accepts `team`. |
-| `elab_info` | Instance version, PHP version, aggregate counts. |
-| `elab_search` | List experiments / items / templates / items_types within one team. Supports the elabftw `extended` DSL (`rating:5 and tag:"buffer"`). |
-| `elab_get` | Fetch a single entity with body and parsed `extra_fields`. Pass `include=["attachments","steps","comments","links"]` to fan out sub-resources in one call (cohort-review shortcut). Body rendering: `format="markdown"` (default) preserves tables + link hrefs; `format="text"` = legacy stripped plaintext; `format="html"` = raw. |
-| `elab_get_bulk` | Fetch up to 50 entities of the same kind with shared `include` / `format`. Chunks requests into groups of 8. Each id is team-validated before fetch. |
-| `elab_list_attachments` | File attachment metadata on an entity. |
-| `elab_download_attachment` | Raw bytes. Text files returned as text; binary as base64. Files >2 MB are truncated with a note. |
-| `elab_list_comments` | Comments on an entity. |
-| `elab_list_steps` | Checklist steps. Unfinished shown as `[ ]`, finished as `[x]`. |
-| `elab_list_links` | Cross-entity links (pass `targetKind=experiments` or `items`). |
-| `elab_list_templates` | Experiment templates in a team. |
-| `elab_list_items_types` | Items type schemas. |
-| `elab_list_tags` | Tags in a team. |
-| `elab_list_events` | Scheduler / booking events. |
-| `elab_list_teams` | All teams on the instance (for id → name mapping). Marks which teams have keys configured. |
-| `elab_configured_teams` | List teams this MCP has keys for. |
-| `elab_search_users` | Search users by name/email (empty `q` lists visible). Resolves opaque `userid` to identity. Requires team-admin key. Identity fields gated behind `ELABFTW_REVEAL_USER_IDENTITIES=true`. |
-| `elab_list_extra_field_names` | Instance-wide list of every `extra_fields` key with data. Use to discover which structured fields templates define before reviewing student submissions. |
-| `elab_list_revisions` | List body revisions for an entity. Surfaces edit history (who / when / size) for cohort review. Per-instance availability. |
-| `elab_get_revision` | Fetch one revision's body. Rendered through the markdown path (tables + hrefs preserved). |
-| `elab_get_user` | Fetch one user by `userid`. Identity fields gated behind `ELABFTW_REVEAL_USER_IDENTITIES=true`. |
-| `elab_list_team_users` | Roster for a given team. Works around the lack of a `/teams/{id}/users` endpoint by filtering `/users` client-side. Requires team-admin key. |
-| `elab_export` | PDF / PDF-A / ZIP / ZIP-A / ELN / ELN-HTML / CSV / JSON / QR-PNG / QR-PDF. |
-| `elab_search_all_teams` | (multi-team only) Fan out a search across every configured team in parallel. |
-
-### Write (requires `ELABFTW_ALLOW_WRITES=true`)
-
-| Tool | Purpose |
-|---|---|
-| `elab_create_entity` | Create an experiment or item (optionally from a template). Verifies the new entry lands in the requested team. Bodies are stored as HTML by default — see "Rich body rendering" below if you want markdown. |
-| `elab_update_entity` | Patch title / body / category / status / rating / date / metadata / permissions. `content_type` toggles body rendering between `"html"` (default) and `"markdown"`. Switch to `"markdown"` when your body uses GFM tables, `#` headings, fenced code, etc. — otherwise they render as literal characters. |
-| `elab_update_extra_field` | Patch a single `extra_fields` value without rewriting the whole metadata blob. |
-| `elab_duplicate_entity` | Duplicate with optional file copy and back-link. |
-| `elab_delete_entity` | Soft-delete (state=3). Permanent deletion is sysadmin-only and not exposed. |
-| `elab_add_comment` | Add a comment. |
-| `elab_add_step` / `elab_toggle_step` | Manage checklist steps. |
-| `elab_link_entities` / `elab_unlink_entities` | Cross-entity links. Both ends must be in the same team. |
-| `elab_add_tag` / `elab_remove_tag` | Tag management. |
-
-### Destructive (requires `ELABFTW_ALLOW_DESTRUCTIVE=true`)
-
-These alter the audit trail and most cannot be undone without admin
-intervention. Gated behind a second flag on purpose.
-
-| Tool | Purpose |
-|---|---|
-| `elab_lock` | Lock an entity. |
-| `elab_unlock` | Force-unlock. Admin only. |
-| `elab_timestamp` | RFC 3161 trusted timestamp. Consumes from `ts_balance`. |
-| `elab_bloxberg` | Anchor on the Bloxberg blockchain. |
-| `elab_sign` | Cryptographic signature with a configured signature key. |
-
-### Rich body rendering
-
-elabftw stores each entity body with a `content_type`: **HTML (default)**
-or **markdown**. This matters because `elab_create_entity` does not
-currently expose `content_type` — every new entry is created in HTML
-mode. If you send a markdown-flavoured body at creation time
-(`# heading`, GFM tables, `**bold**`), it will be stored verbatim as
-HTML and rendered as raw characters in the UI.
-
-Two-step pattern that works:
-
-```
-elab_create_entity({ entityType: "experiments", title, body, tags })
-elab_update_entity({ entityType: "experiments", id, content_type: "markdown", body })
-```
-
-The `update` call flips the stored `content_type` *and* re-serves the
-body through elabftw's markdown → HTML pipeline so tables, headings,
-and links render correctly. You can also use `content_type: "markdown"`
-on any later update that touches `body`.
-
-## How team scoping works
-
-Every tool that touches team-scoped data accepts an optional
-`team: number` argument:
-
-- **Without `team`** the default team's key is used (lowest configured
-  id, or whatever `ELABFTW_DEFAULT_TEAM` says).
-- **With `team=n`** the call uses the `ELABFTW_KEY_<n>` key, and list
-  results are filtered to rows with `team=n`. Single-entity reads and
-  writes verify the entity's team before running and return a clear
-  error on mismatch.
-
-**elabftw API keys are bound to a team context at creation time.** A
-key minted while viewing team 19 sees team 19 entries as whatever role
-the user holds there, plus a sliver of cross-team data (entries you
-authored, or entries with wide `canread`). Full admin reach into
-another team needs a *second* key minted while that team is current in
-the UI.
-
-**Startup self-check** calls `/users/me` with every configured key
-and logs a stderr warning if a key's current team doesn't match its
-declared index. Non-fatal, but usually means `elab_create_entity`
-would create entries in the wrong team.
-
-This is a soft guardrail running in the MCP process, not in elabftw.
-For hard isolation, use an account that is only a member of the
-target team.
-
-### User roster access
-
-`elab_search_users` / `elab_get_user` / `elab_list_team_users` hit
-`/users` and `/users/{id}`. These endpoints are sysadmin-wide;
-team-admin keys typically succeed but are restricted to users visible
-via team membership. A plain team-member key gets 403. There is no
-dedicated `/teams/{id}/users` endpoint on the stable API, so
-`elab_list_team_users` runs `/users` under the team's key and filters
-client-side.
-
-### For teaching-lab / cohort review
-
-A common use case is reviewing a class of student practicals — e.g. 40 students all running the same template, with an instructor using the LLM to spot deviations. The recommended workflow:
-
-1. **Find the template.** `elab_list_templates` lists experiment templates in a team. Note the id of the practical.
-2. **See the expected schema.** `elab_get({entityType: "experiments_templates", id})` returns the template's body + `extra_fields`. This is the ground truth for what students were asked to fill in.
-3. **Check which keys the instance uses.** `elab_list_extra_field_names` surfaces every `extra_fields` key with any data on the instance — a quick way to spot whether students filled structured fields vs typed everything into prose.
-4. **List submissions.** `elab_search({entityType: "experiments", extended: "tag:\"ACFP25\""})` (or whichever tag/template the cohort shares).
-5. **Pull full submissions in one call each.** `elab_get({id, include: ["attachments","steps","comments","links"]})` — one tool call per student, body rendered as markdown so tables survive.
-6. **Resolve userids to names (if needed).** For a single lookup use `elab_get_user({userid})`. For a cohort, `elab_list_team_users({team})` returns the whole roster in one call (name + email + orcid + role + cross-team memberships). `elab_search_users` is the fallback when you only have a partial name to go on. All three require a team-admin key; name / email / orcid fields are redacted unless `ELABFTW_REVEAL_USER_IDENTITIES=true`.
-
-### Privacy defaults
-
-By default the MCP redacts user names / emails / orcids out of
-formatter output. `elab_list_comments` shows `user 165 @ 2026-04-14:
-...` instead of `Ada Lovelace @ 2026-04-14: ...`, and the Phase-1
-user tools return `userid` + team memberships only. The numeric
-`userid` surfaced on every entity stays — it is the join key for
-cohort review and does not leak identity on its own.
-
-Set `ELABFTW_REVEAL_USER_IDENTITIES=true` when the operator wants
-the model to see real names (cohort review with student consent,
-multi-tenant admin use, instructor workflows). `elab_me` is exempt
-from the gate — the caller inspecting their own account is not a
-privacy concern and the redaction would break the authn
-sanity-check that tool exists for.
+- **Local Mode (STDIO)**: The server talks MCP over stdin/stdout to a locally-trusted parent process (Claude Desktop, Cursor, etc.). **No network port is opened.** This remains the most secure way to use the MCP for personal research.
+- **Hosted Mode (SSE)**: When `MCP_MODE=hosted` is set, the server opens an HTTP port. This is intended for server-side deployments. Security is handled via:
+  - **Tokenized Sessions**: Users receive unique tokens; their API keys are never stored on disk and are kept isolated in memory.
+  - **Inactivity Timeouts**: Sessions are purged from memory after 30 minutes of inactivity.
+- **Your own API key**: All eLabFTW calls use the key you provide. The MCP has no elevated access; it can only do what your user account is permitted to do.
+- **Writes are off by default**: Even with the new transport, mutation tools are only exposed if `ELABFTW_ALLOW_WRITES=true` is set by the admin.
 
 ## Known gotchas
 
-- **`Authorization` header has no `Bearer` prefix.** This trips up
-  generic HTTP clients. The server sends the key verbatim, which is
-  what elabftw expects.
-- **`metadata` is a JSON-encoded string on the wire.** `elab_get`
-  parses it for display; when writing, send `metadata` as a JSON
-  string (or use `elab_update_extra_field` for targeted edits).
-- **Pagination is offset-based with no total count.** Tools cap at 200
-  rows per call; use `offset` to page further.
-- **Locked entities reject edits.** `elab_update_entity` will fail on a
-  locked entry. `elab_unlock` is available under
-  `ELABFTW_ALLOW_DESTRUCTIVE`.
-- **Upload `type` field is the parent entity type, not MIME.** The
-  attachment formatter uses the filename extension instead.
-- **Attachment uploads are not exposed.** `elab_list_attachments` and
-  `elab_download_attachment` are available, but there is currently no
-  MCP tool for adding files to an entry — those still need to go
-  through the elabftw UI. The underlying client method
-  (`ElabftwClient.uploadFile`) exists for programmatic use.
-- **Bodies are HTML by default on create.** If you seed an entry with
-  markdown content, follow up with
-  `elab_update_entity({content_type: "markdown", body: ...})` — see
-  "Rich body rendering" above.
+- **Session Expiry**: In Hosted/SSE mode, sessions expire after 30 minutes of inactivity. You will need to re-register at `/register` if your session times out.
+- **`Authorization` header has no `Bearer` prefix.** This trips up generic HTTP clients. The server sends the key verbatim, which is what eLabFTW expects.
+- **`metadata` is a JSON-encoded string on the wire.** `elab_get` parses it for display; when writing, send `metadata` as a JSON string.
+- **Bodies are HTML by default on create.** If you seed an entry with markdown content, follow up with `elab_update_entity({content_type: "markdown", body: ...})`.
+- **Pagination is offset-based with no total count.** Tools cap at 200 rows per call; use `offset` to page further.
+- **Locked entities reject edits.** `elab_update_entity` will fail on a locked entry. `elab_unlock` is available under `ELABFTW_ALLOW_DESTRUCTIVE`.
 
 ## Programmatic use
 
@@ -315,9 +163,6 @@ for await (const row of client.paginate('experiments', { q: 'stöber' })) {
 }
 ```
 
-Everything exposed as an MCP tool is also available as a `client.*`
-method. See `src/client/client.ts` for the full surface.
-
 ## Development
 
 ```bash
@@ -328,63 +173,19 @@ npm run build      # emits dist/index.js, dist/cli.js, and dist/*.d.ts via tsup
 
 Run the server locally against your instance:
 
+**STDIO Mode:**
 ```bash
 ELABFTW_BASE_URL=https://elab.example.com \
 ELABFTW_API_KEY=3-... \
 node dist/cli.js
 ```
 
-## Security model
-
-The deployment model here is deliberately conservative. This is worth
-saying plainly because MCP tool-calling has drawn real critique from
-the elabftw community (see
-[elabftw#5649](https://github.com/elabftw/elabftw/issues/5649) where
-upstream declined to build an official MCP, citing tool-poisoning and
-firewall concerns).
-
-- **stdio only, no network exposure.** The server talks MCP over
-  stdin/stdout to a locally-trusted parent process (Claude Desktop,
-  Claude Code, Cursor, etc.). No port is opened.
-- **The user's own API key.** All elabftw calls are authenticated with
-  a key you minted in *your* UI, with *your* permissions. The MCP has
-  no elevated access — it can only do what you could do by hand.
-- **Firewall-bound instances stay that way.** The MCP runs on your
-  machine; only your machine talks to elabftw. It does not route data
-  through any third-party service.
-- **Writes are off by default.** Even a read-write API key is exposed
-  to the model as read-only unless you set `ELABFTW_ALLOW_WRITES=true`.
-  Audit-trail actions (lock/sign/timestamp/bloxberg) require a second
-  flag, `ELABFTW_ALLOW_DESTRUCTIVE=true`.
-- **Tool-poisoning surface.** Tool descriptions and argument schemas
-  are the only thing the model sees and acts on. They live in-repo,
-  are reviewable, and don't fetch remote content. If you fork, audit
-  them before shipping.
-
-For tighter isolation, create a dedicated elabftw user that is only a
-member of the team you want the MCP to reach, and mint the API key
-from that account.
-
-## Related work
-
-- [fcichos/elabftw-mcp-server](https://github.com/fcichos/elabftw-mcp-server)
-  is a Python MCP for elabftw. At time of writing it has no license
-  declared, does not yet cover writes, destructive ops, multi-team,
-  exports, or extra_fields in a unified way. Worth knowing it exists;
-  different design choices from this package.
-- [elabapi-python](https://github.com/elabftw/elabapi-python) is the
-  upstream Python SDK generated from the OpenAPI spec — the right
-  pick if you want the raw API without the MCP layer.
-- [elAPI](https://github.com/uhd-urz/elAPI) is a third-party CLI +
-  Python library. Useful as a reference for pagination, auth, and
-  spec quirks.
-
-## Contributing
-
-Issues and PRs welcome. The server is deliberately thin — most of the
-code is 1:1 with the elabftw API v2 spec. If elabftw ships a new
-endpoint, adding a method to `ElabftwClient` plus a corresponding MCP
-tool is usually a 30-line change.
+**Hosted Mode (Testing):**
+```bash
+MCP_MODE=hosted \
+MCP_PORT=8000 \
+node dist/cli.js
+```
 
 ## License
 
