@@ -1,4 +1,8 @@
-# @sura_ai/elabftw
+# @harrytyp/elabftw-mcp (Hosted)
+
+This repository is a **fork** of the original [letrplB/elabftw-mcp](https://github.com/letrplB/elabftw-mcp). 
+
+While the original is designed primarily as a local `stdio` server for single-user desktop use, this fork extends it to support **centralized server-side hosting**. It adopts the architectural patterns found in [harrytyp/datatagger-mcp](https://github.com/harrytyp/datatagger-mcp) to enable multi-user support via HTTP/SSE and a self-service registration endpoint.
 
 Model Context Protocol server for [elabftw](https://www.elabftw.net/) —
 search, read, and (optionally) mutate experiments, items, attachments,
