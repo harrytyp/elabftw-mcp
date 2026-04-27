@@ -8,7 +8,14 @@ MCP-aware AI client.
 Target: elabftw **5.5+** via the [API v2](https://doc.elabftw.net/api/v2/).
 Node 18+.
 
-## Quick start
+## Usage Modes
+
+The server supports two transport modes:
+
+1.  **STDIO (Local)**: Default mode, used for local integrations like Claude Desktop.
+2.  **SSE (Server)**: Used for network-accessible deployments (e.g., in Docker). Supports multi-user session authentication.
+
+## Quick start (STDIO)
 
 ### Single team
 
@@ -62,6 +69,39 @@ pass `team=7` to route a call through the team-7 key. The tool
 `elab_search_all_teams` runs the same query across every configured
 team in parallel and merges results.
 
+## Centralized Hosting (SSE)
+
+This server can be hosted centrally (e.g., in a Docker container) to serve multiple users. Each user can provide their own API key via a registration interface or directly to the LLM.
+
+### Deployment (Docker)
+
+The repository includes a `Dockerfile` and `docker-compose.yml` for easy deployment.
+
+1.  **Configure**: Edit `docker-compose.yml` to set your default instance URL (optional).
+2.  **Start**:
+    ```bash
+    docker-compose up -d --build
+    ```
+3.  **Access**: The server will be reachable at `http://localhost:8000`.
+
+### Registration & Personal URLs
+
+Admins can direct users to `http://localhost:8000/register`.
+1.  Users enter their **eLabFTW API Key** and **Instance URL**.
+2.  The server generates a personal session URL (e.g., `http://.../mcp?token=uuid`).
+3.  Users paste this URL into their MCP-compatible client (like Claude Desktop or Cursor) using the SSE transport.
+
+### Session-based Authentication
+
+Users can also "log in" to an existing session by providing their token to the LLM. The LLM will then use the `configure_auth` tool:
+
+`configure_auth(token="YOUR_API_KEY", base_url="https://elab.example.com")`
+
+This configuration is:
+-   **Private**: Stored only for the current session.
+-   **Transient**: Lost when the session ends (30-minute inactivity timeout).
+-   **Priority**: Overrides any global environment variables set on the server.
+
 ## Environment
 
 | Variable | Required | Default | Purpose |
@@ -77,6 +117,9 @@ team in parallel and merges results.
 | `ELABFTW_REVEAL_USER_IDENTITIES` | no | `false` | `true` to surface user names / emails / orcids in formatter output. Default-off means user tools and comment listings return `user <id>` instead of PII. `elab_me` is exempt (callers always see their own identity). |
 | `ELABFTW_TIMEOUT_MS` | no | `30000` | Per-request timeout. |
 | `ELABFTW_USER_AGENT` | no | `sura-elabftw-mcp/<version>` | Shows up in instance access logs. |
+| `MCP_MODE` | no | `stdio` | Set to `hosted` for HTTP/SSE server mode. |
+| `MCP_HOST` | no | `0.0.0.0` | Host to bind the HTTP server to. |
+| `MCP_PORT` | no | `8000` | Port for the HTTP server. |
 
 **Exactly one of `ELABFTW_API_KEY` or `ELABFTW_KEY_<teamId>` must be
 set.** Mixing the two is rejected at startup.
