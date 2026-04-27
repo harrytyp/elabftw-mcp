@@ -75,36 +75,41 @@ team in parallel and merges results.
 
 ## Centralized Hosting (SSE)
 
-This server can be hosted centrally (e.g., in a Docker container) to serve multiple users. Each user can provide their own API key via a registration interface or directly to the LLM.
+This server can be hosted centrally (e.g., in a Docker container) to serve multiple users. Each user provides their own API key via a registration interface, ensuring total isolation between users.
 
-### Deployment (Docker)
+### Deployment (Admin Guide)
 
-The repository includes a `Dockerfile` and `docker-compose.yml` for easy deployment.
+The repository includes a `Dockerfile` and `docker-compose.yml` for production-ready deployment.
 
-1.  **Configure**: Edit `docker-compose.yml` to set your default instance URL (optional).
-2.  **Start**:
+1.  **Clone and Configure**:
+    - Clone this repository.
+    - (Optional) Edit `docker-compose.yml` to set a default `ELABFTW_BASE_URL`.
+2.  **Start the Cluster**:
     ```bash
     docker-compose up -d --build
     ```
-3.  **Access**: The server will be reachable at `http://localhost:8000`.
+    This starts the MCP server and a Caddy reverse proxy (providing automatic HTTPS on port 443).
+3.  **Network Access**: 
+    - Ensure ports `80` and `443` are open on your firewall.
+    - The registration page will be available at `https://your-domain/register`.
 
-### Registration & Personal URLs
+### User Setup (Registration)
 
-Admins can direct users to `http://localhost:8000/register`.
-1.  Users enter their **eLabFTW API Key** and **Instance URL**.
-2.  The server generates a personal session URL (e.g., `http://.../mcp?token=uuid`).
-3.  Users paste this URL into their MCP-compatible client (like Claude Desktop or Cursor) using the SSE transport.
+Users do not need to edit config files. They can self-provision their access:
+1.  Visit the registration page: `https://your-domain/register`.
+2.  Enter your **eLabFTW API Key** and **Instance URL**.
+3.  The server generates a **Personal Session URL** (e.g., `https://your-domain/sse?token=uuid`).
+4.  **Configure Client**: Copy this URL into your MCP client (Claude Desktop, Cursor, etc.) as the SSE server endpoint.
 
 ### Session-based Authentication
 
-Users can also "log in" to an existing session by providing their token to the LLM. The LLM will then use the `configure_auth` tool:
+Users can update their credentials without re-registering by using the `configure_auth` tool directly in the chat:
 
-`configure_auth(token="YOUR_API_KEY", base_url="https://elab.example.com")`
+`configure_auth(token="YOUR_NEW_API_KEY", baseUrl="https://elab.example.com")`
 
-This configuration is:
--   **Private**: Stored only for the current session.
--   **Transient**: Lost when the session ends (30-minute inactivity timeout).
--   **Priority**: Overrides any global environment variables set on the server.
+-   **Private**: Credentials are stored only in memory for the current session.
+-   **Transient**: Sessions expire after 30 minutes of inactivity.
+-   **Priority**: This overrides any global defaults set in `docker-compose.yml`.
 
 ## Environment
 

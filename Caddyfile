@@ -1,0 +1,9 @@
+:80 {
+    # Redirect HTTP to HTTPS
+    redir https://{host}{uri}
+}
+
+:443 {
+    # Reverse proxy to the MCP server
+    reverse_proxy mcp-elabftw:8000
+}
