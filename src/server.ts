@@ -1,15 +1,6 @@
-#!/usr/bin/env node
-/**
- * @module elabftw MCP Server — CLI entry
- *
- * Standalone MCP server that wraps the elabftw v2 REST API. Run it as a
- * stdio child process of any MCP-aware client (Claude Desktop, Claude
- * Code, Cursor, etc.). See README for full env-var documentation.
- */
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import * as HttpServer from './server';
+import { HttpServerTransport } from '@modelcontextprotocol/sdk/server/http.js';
 import { ClientRegistry, validateRegistry } from './mcp/clients';
 import { loadConfig } from './mcp/config';
 import { registerFanoutTools } from './mcp/tools/fanout';
@@ -17,13 +8,6 @@ import { registerReadTools } from './mcp/tools/read';
 import { registerWriteTools } from './mcp/tools/write';
 
 async function main(): Promise<void> {
-  const mcpMode = process.env.MCP_MODE || 'stdio';
-
-  if (mcpMode === 'hosted') {
-    await HttpServer.main();
-    return;
-  }
-
   const config = loadConfig();
   const registry = new ClientRegistry(config);
 
@@ -40,8 +24,14 @@ async function main(): Promise<void> {
     registerFanoutTools(server, registry);
   }
 
-  const transport = new StdioServerTransport();
+  const host = process.env.MCP_HOST || '0.0.0.0';
+  const port = parseInt(process.env.MCP_PORT || '8000', 10);
+
+  const transport = new HttpServerTransport({ host, port });
   await server.connect(transport);
+
+  // biome-ignore lint/suspicious/noConsole: CLI entry point, stdout is appropriate
+  console.log(`elabftw MCP server listening on http://${host}:${port}`);
 }
 
 main().catch((error) => {

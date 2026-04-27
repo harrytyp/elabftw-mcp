@@ -1,0 +1,32 @@
+version: "3.8"
+
+services:
+  mcp-elabftw:
+    build:
+      context: .
+    restart: unless-stopped
+    expose:
+      - "8000"
+    environment:
+      - ELABFTW_BASE_URL=https://elab.example.com
+      - ELABFTW_API_KEY=3-<rest of your key>
+      - MCP_MODE=hosted
+      - MCP_PORT=8000
+      - MCP_HOST=0.0.0.0
+
+  # caddy:
+  #   image: caddy:2
+  #   restart: unless-stopped
+  #   ports:
+  #     - "80:80"
+  #     - "443:443"
+  #   volumes:
+  #     - ./Caddyfile:/etc/caddy/Caddyfile
+  #     - caddy_data:/data
+  #     - caddy_config:/config
+  #   depends_on:
+  #     - mcp-elabftw
+
+# volumes:
+#   caddy_data:
+#   caddy_config:
