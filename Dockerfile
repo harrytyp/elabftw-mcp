@@ -1,4 +1,18 @@
 
+# Build stage
+FROM node:18-alpine AS builder
+
+WORKDIR /app
+
+COPY package*.json ./
+# Install all dependencies including devDependencies
+RUN npm install
+
+COPY . .
+# Use npx to ensure tsup is found in node_modules/.bin
+RUN npx tsup
+
+# Production stage
 FROM node:18-alpine
 
 WORKDIR /app
@@ -6,9 +20,7 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm install --omit=dev
 
-COPY . .
-
-RUN npm run build
+COPY --from=builder /app/dist ./dist
 
 EXPOSE 8000
 
