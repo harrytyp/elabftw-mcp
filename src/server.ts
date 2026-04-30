@@ -82,7 +82,7 @@ function createMcpServer(registry: ClientRegistry, config: any) {
 
 // --- Main Server ---
 
-async function main(): Promise<void> {
+export async function main(): Promise<void> {
   const config = loadConfig();
   const registry = new ClientRegistry(config);
   await validateRegistry(registry, config.teamDeclaredByUser);
