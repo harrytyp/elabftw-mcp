@@ -115,7 +115,7 @@ async function main(): Promise<void> {
           </div>
           <div style="margin-bottom: 15px;">
             <label style="display: block; margin-bottom: 5px; font-weight: bold;">eLabFTW Base URL:</label>
-            <input type="text" name="baseUrl" value="${config.baseUrl || 'https://elab.example.com'}" style="width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box;">
+            <input type="text" name="baseUrl" value="${config.baseUrl}" style="width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box;">
           </div>
           <button type="submit" style="background: #3498db; color: white; border: none; padding: 12px 24px; border-radius: 4px; cursor: pointer; font-size: 1em; width: 100%;">Generate MCP URL</button>
         </form>

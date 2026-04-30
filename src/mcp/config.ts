@@ -62,14 +62,9 @@ class ElabMcpConfigError extends Error {
   }
 }
 
-function requireEnv(name: string): string {
+function optionalEnv(name: string, fallback: string): string {
   const value = process.env[name];
-  if (!value || !value.trim()) {
-    throw new ElabMcpConfigError(
-      `Missing required env var ${name}. See the README of @sura_ai/elabftw.`
-    );
-  }
-  return value.trim();
+  return (value && value.trim()) ? value.trim() : fallback;
 }
 
 function optionalBool(name: string, fallback = false): boolean {
@@ -109,7 +104,7 @@ function collectIndexedKeys(): ElabKeyConfig[] {
 }
 
 export function loadConfig(): ElabMcpConfig {
-  const baseUrl = requireEnv('ELABFTW_BASE_URL').replace(/\/+$/, '');
+  const baseUrl = optionalEnv('ELABFTW_BASE_URL', 'https://elntest.ub.tum.de').replace(/\/+$/, '');
 
   const timeoutRaw = process.env.ELABFTW_TIMEOUT_MS;
   const parsedTimeout = timeoutRaw ? Number.parseInt(timeoutRaw, 10) : undefined;
