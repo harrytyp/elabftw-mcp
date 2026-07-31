@@ -1,9 +1,11 @@
 
-import express, { Request, Response, NextFunction } from 'express';
+import express from 'express';
+import type { Request, Response, NextFunction } from 'express';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
+import { z } from 'zod';
 import { ClientRegistry, validateRegistry } from './mcp/clients';
 import { loadConfig } from './mcp/config';
 import { registerFanoutTools } from './mcp/tools/fanout';
@@ -55,9 +57,10 @@ function createMcpServer(registry: ClientRegistry, config: any) {
   // Custom Tool: configure_auth
   server.tool(
     'configure_auth',
+    'Configure the eLabFTW API key and base URL for the current session.',
     {
-      token: { type: 'string', description: 'Your eLabFTW API Key' },
-      baseUrl: { type: 'string', description: 'Your eLabFTW Instance URL' },
+      token: z.string().describe('Your eLabFTW API Key'),
+      baseUrl: z.string().describe('Your eLabFTW Instance URL'),
     },
     async ({ token, baseUrl }) => {
       const ctx = sessionContext.getStore();
